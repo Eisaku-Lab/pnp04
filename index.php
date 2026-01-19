@@ -1,0 +1,563 @@
+<?php
+//データベース接続
+require_once('function.php');
+
+//POSTかどうか
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    header('Content-Type: application/json; charset=utf-8');
+
+    //データ取得
+    $data = file_get_contents('php://input');
+    $data2 = json_decode($data, true);
+
+    //セッションID
+    $sid = uniqid('session_', true);
+
+    //判定結果を入れる配列
+    $result = array();
+
+    //ものづくり補助金の判定
+    $score1 = 0;
+    $reasons1 = array();
+    $name1 = 'ものづくり補助金';
+
+    //従業員数チェック
+    if ($data2['company']['employees_count'] >= 1) {
+        $score1 = $score1 + 10;
+        $reasons1[] = '従業員がいる企業です';
+    }
+    if ($data2['company']['employees_count'] >= 20) {
+        $score1 = $score1 + 10;
+        $reasons1[] = '従業員20人以上の企業です';
+    }
+
+    //業種チェック
+    if ($data2['company']['industry'] == 'manufacturing') {
+        $score1 = $score1 + 15;
+        $reasons1[] = '製造業です';
+    }
+
+    //新規性チェック
+    if ($data2['project']['novelty_product'] == 'yes') {
+        $score1 = $score1 + 20;
+        $reasons1[] = '新規性のある製品・サービスです';
+    }
+    if ($data2['project']['novelty_market'] == 'yes') {
+        $score1 = $score1 + 15;
+        $reasons1[] = '新規市場開拓が期待できます';
+    }
+
+    //設備投資チェック
+    if ($data2['investment']['includes_machine_or_system'] == 'yes') {
+        $score1 = $score1 + 20;
+        $reasons1[] = '設備・システム投資が含まれています';
+    }
+
+    //投資額チェック
+    if ($data2['investment']['total_amount_yen'] >= 1000000) {
+        $score1 = $score1 + 10;
+        $reasons1[] = '投資額が100万円以上です';
+    }
+
+    //評価を決める
+    $eval1 = '';
+    if ($score1 >= 70) {
+        $eval1 = '非常に適合';
+    } else if ($score1 >= 50) {
+        $eval1 = '適合';
+    } else if ($score1 >= 30) {
+        $eval1 = 'やや適合';
+    } else {
+        $eval1 = '要検討';
+    }
+
+    //結果を配列に入れる
+    $result[] = array(
+        'subsidy_id' => 'monozukuri',
+        'subsidy_name' => $name1,
+        'score' => $score1,
+        'evaluation' => $eval1,
+        'reasons' => $reasons1
+    );
+
+    //事業再構築補助金の判定
+    $score2 = 0;
+    $reasons2 = array();
+    $name2 = '事業再構築補助金';
+
+    //従業員数チェック
+    if ($data2['company']['employees_count'] >= 1) {
+        $score2 = $score2 + 10;
+        $reasons2[] = '従業員がいる企業です';
+    }
+    if ($data2['company']['employees_count'] >= 50) {
+        $score2 = $score2 + 10;
+        $reasons2[] = '従業員50人以上の中規模企業です';
+    }
+
+    //再構築タイプチェック
+    if ($data2['rebuild']['restructuring_type'] == 'new_field') {
+        $score2 = $score2 + 20;
+        $reasons2[] = '新分野展開による再構築です';
+    }
+    if ($data2['rebuild']['restructuring_type'] == 'business_shift') {
+        $score2 = $score2 + 25;
+        $reasons2[] = '事業転換による再構築です';
+    }
+    if ($data2['rebuild']['restructuring_type'] == 'industry_shift') {
+        $score2 = $score2 + 25;
+        $reasons2[] = '業種転換による再構築です';
+    }
+
+    //売上比率チェック
+    if ($data2['rebuild']['new_business_sales_ratio_band'] == 'gt_30') {
+        $score2 = $score2 + 20;
+        $reasons2[] = '新事業の売上比率が30%超を計画しています';
+    }
+
+    //投資額チェック
+    if ($data2['investment']['total_amount_yen'] >= 5000000) {
+        $score2 = $score2 + 10;
+        $reasons2[] = '投資額が500万円以上です';
+    }
+
+    //評価を決める
+    $eval2 = '';
+    if ($score2 >= 70) {
+        $eval2 = '非常に適合';
+    } else if ($score2 >= 50) {
+        $eval2 = '適合';
+    } else if ($score2 >= 30) {
+        $eval2 = 'やや適合';
+    } else {
+        $eval2 = '要検討';
+    }
+
+    //結果を配列に入れる
+    $result[] = array(
+        'subsidy_id' => 'rebuild',
+        'subsidy_name' => $name2,
+        'score' => $score2,
+        'evaluation' => $eval2,
+        'reasons' => $reasons2
+    );
+
+    //レスポンス作成
+    $res = array('session_id' => $sid, 'candidates' => $result);
+
+    //データベースに保存
+    $pdo = db_conn();
+    $sql = "INSERT INTO gm_hojokin_table (session_id,input_json,result_json,created_at) VALUES (:sid,:input,:result,NOW())";
+    $stmt = $pdo->prepare($sql);
+    $stmt->bindValue(':sid', $sid, PDO::PARAM_STR);
+    $stmt->bindValue(':input', $data, PDO::PARAM_STR);
+    $stmt->bindValue(':result', json_encode($res, JSON_UNESCAPED_UNICODE), PDO::PARAM_STR);
+    $stmt->execute();
+
+    //JSON出力
+    echo json_encode($res, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    exit;
+}
+?>
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>補助金マッチング</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Hiragino Kaku Gothic ProN", "ヒラギノ角ゴ ProN W3", "Noto Sans JP", Meiryo, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #F5F8FA;
+            line-height: 1.6;
+        }
+
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            color: #003D82;
+            border-bottom: 4px solid #0066CC;
+            padding-bottom: 12px;
+            font-size: 26px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        h2 {
+            color: #003D82;
+            font-size: 20px;
+            font-weight: 600;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            padding-left: 10px;
+            border-left: 4px solid #0066CC;
+        }
+
+        p {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #003D82;
+            font-size: 15px;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #C8D6E5;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.3s;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #0066CC;
+            box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+        }
+
+        button {
+            background: linear-gradient(135deg, #0066CC 0%, #004C99 100%);
+            color: white;
+            padding: 14px 40px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s;
+            box-shadow: 0 4px 12px rgba(0, 102, 204, 0.3);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 102, 204, 0.4);
+        }
+
+        button:disabled {
+            background: linear-gradient(135deg, #CCCCCC 0%, #999999 100%);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        #results {
+            margin-top: 40px;
+        }
+
+        .result-card {
+            background: white;
+            padding: 30px;
+            margin-bottom: 25px;
+            border-radius: 10px;
+            border: 2px solid #C8D6E5;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            border-left: 6px solid #0066CC;
+            transition: all 0.3s;
+        }
+
+        .result-card:hover {
+            box-shadow: 0 6px 20px rgba(0, 102, 204, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .score {
+            font-size: 48px;
+            font-weight: bold;
+            color: #0066CC;
+            margin: 15px 0;
+        }
+
+        .evaluation {
+            font-size: 20px;
+            font-weight: bold;
+            margin: 12px 0;
+        }
+
+        .eval-excellent {
+            color: #0066CC;
+        }
+
+        .eval-good {
+            color: #00A0E9;
+        }
+
+        .eval-fair {
+            color: #FF9800;
+        }
+
+        .eval-poor {
+            color: #F57C00;
+        }
+
+        .reasons {
+            margin-top: 20px;
+        }
+
+        .reasons ul {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        .reasons li {
+            margin: 10px 0;
+            padding: 12px 15px;
+            background: #F5F8FA;
+            border-radius: 6px;
+            border-left: 3px solid #0066CC;
+            color: #333;
+        }
+
+        .nav-link {
+            display: inline-block;
+            color: #0066CC;
+            text-decoration: none;
+            font-weight: 600;
+            padding: 8px 0;
+            transition: all 0.3s;
+        }
+
+        .nav-link:hover {
+            color: #004C99;
+            text-decoration: underline;
+        }
+
+        #loading {
+            display: none;
+            color: #0066CC;
+            font-weight: bold;
+            margin-top: 15px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>補助金マッチング判定</h1>
+        <p>事業内容を入力して、補助金との適合度をスコアで判定します。</p>
+        <form id="evalForm">
+            <h2>企業情報</h2>
+            <div class="form-group">
+                <label>組織形態</label>
+                <select name="company.org_type">
+                    <option value="">選択してください</option>
+                    <option value="corporation">株式会社</option>
+                    <option value="sole_prop">個人事業主</option>
+                    <option value="npo">NPO法人</option>
+                    <option value="other">その他</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>業種</label>
+                <select name="company.industry">
+                    <option value="">選択してください</option>
+                    <option value="manufacturing">製造業</option>
+                    <option value="construction">建設業</option>
+                    <option value="logistics">物流業</option>
+                    <option value="wholesale">卸売業</option>
+                    <option value="retail">小売業</option>
+                    <option value="service">サービス業</option>
+                    <option value="it">IT業</option>
+                    <option value="other">その他</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>従業員数</label>
+                <input type="number" name="company.employees_count" min="0" placeholder="例: 25">
+            </div>
+            <h2>事業計画</h2>
+            <div class="form-group">
+                <label>現在の事業内容（簡潔に）</label>
+                <textarea name="project.current_business" rows="2" placeholder="例: 自動車部品の製造"></textarea>
+            </div>
+            <div class="form-group">
+                <label>新しい取り組み（簡潔に）</label>
+                <textarea name="project.new_initiative" rows="2" placeholder="例: IoTセンサーを活用した品質管理システムの導入"></textarea>
+            </div>
+            <div class="form-group">
+                <label>製品・サービスの新規性</label>
+                <select name="project.novelty_product">
+                    <option value="unknown">不明</option>
+                    <option value="yes">新規性あり</option>
+                    <option value="no">新規性なし</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>市場の新規性</label>
+                <select name="project.novelty_market">
+                    <option value="unknown">不明</option>
+                    <option value="yes">新規市場</option>
+                    <option value="no">既存市場</option>
+                </select>
+            </div>
+            <h2>投資内容</h2>
+            <div class="form-group">
+                <label>総投資額（円）</label>
+                <input type="number" name="investment.total_amount_yen" min="0" placeholder="例: 5000000">
+            </div>
+            <div class="form-group">
+                <label>設備・システム投資を含む</label>
+                <select name="investment.includes_machine_or_system">
+                    <option value="unknown">不明</option>
+                    <option value="yes">含む</option>
+                    <option value="no">含まない</option>
+                </select>
+            </div>
+            <h2>事業再構築（該当する場合）</h2>
+            <div class="form-group">
+                <label>再構築タイプ</label>
+                <select name="rebuild.restructuring_type">
+                    <option value="unknown">該当なし</option>
+                    <option value="new_field">新分野展開</option>
+                    <option value="business_shift">事業転換</option>
+                    <option value="industry_shift">業種転換</option>
+                    <option value="other">その他</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>新事業の売上比率（計画）</label>
+                <select name="rebuild.new_business_sales_ratio_band">
+                    <option value="unknown">不明</option>
+                    <option value="lt_10">10%未満</option>
+                    <option value="10_30">10〜30%</option>
+                    <option value="gt_30">30%超</option>
+                </select>
+            </div>
+            <button type="submit">判定する</button>
+            <div id="loading">判定中...</div>
+        </form>
+        <div id="results"></div>
+        <a href="select.php" class="nav-link"> 判定履歴を見る</a>
+    </div>
+    <script>
+        document.getElementById('evalForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            //ローディング表示
+            document.getElementById('loading').style.display = 'block';
+            document.querySelector('button[type="submit"]').disabled = true;
+
+            //フォームデータを収集
+            var formData = new FormData(e.target);
+            var input = {
+                company: {},
+                project: {},
+                investment: {},
+                rebuild: {}
+            };
+
+            for (var pair of formData.entries()) {
+                var key = pair[0];
+                var value = pair[1];
+                var keys = key.split('.');
+                if (keys.length == 2) {
+                    var section = keys[0];
+                    var field = keys[1];
+                    //数値変換
+                    if (field.includes('count') || field.includes('amount') || field.includes('yen')) {
+                        input[section][field] = value ? parseInt(value) : null;
+                    } else {
+                        input[section][field] = value || 'unknown';
+                    }
+                }
+            }
+
+            //デフォルト値設定
+            input.project.novelty_market = input.project.novelty_market || 'unknown';
+            input.rebuild.restructuring_type = input.rebuild.restructuring_type || 'unknown';
+            input.rebuild.new_business_sales_ratio_band = input.rebuild.new_business_sales_ratio_band || 'unknown';
+
+            //API呼び出し
+            try {
+                var response = await fetch('index.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(input)
+                });
+
+                var result = await response.json();
+
+                //ローディング非表示
+                document.getElementById('loading').style.display = 'none';
+                document.querySelector('button[type="submit"]').disabled = false;
+
+                showResults(result);
+
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                document.querySelector('button[type="submit"]').disabled = false;
+                alert('エラーが発生しました: ' + error.message);
+            }
+        });
+
+        function showResults(result) {
+            var resultsDiv = document.getElementById('results');
+            var html = '<h2>判定結果</h2>';
+
+            for (var i = 0; i < result.candidates.length; i++) {
+                var candidate = result.candidates[i];
+                //評価に応じてクラスを決定
+                var evalClass = 'eval-poor';
+                if (candidate.score >= 70) {
+                    evalClass = 'eval-excellent';
+                } else if (candidate.score >= 50) {
+                    evalClass = 'eval-good';
+                } else if (candidate.score >= 30) {
+                    evalClass = 'eval-fair';
+                }
+
+                html += '<div class="result-card">';
+                html += '<h3>' + candidate.subsidy_name + '</h3>';
+                html += '<div class="score">' + candidate.score + ' 点</div>';
+                html += '<div class="evaluation ' + evalClass + '">評価: ' + candidate.evaluation + '</div>';
+                html += '<div class="reasons"><strong>スコア獲得理由:</strong><ul>';
+                for (var j = 0; j < candidate.reasons.length; j++) {
+                    html += '<li>' + candidate.reasons[j] + '</li>';
+                }
+                html += '</ul></div></div>';
+            }
+
+            resultsDiv.innerHTML = html;
+
+            //結果にスクロール
+            resultsDiv.scrollIntoView({
+                behavior: 'smooth'
+            });
+        }
+    </script>
+</body>
+
+</html>
